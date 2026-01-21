@@ -1,40 +1,5 @@
 version: 2.1
 
-# List of all environment variables accessible in this config file
-# https://circleci.com/docs/2.0/env-vars/#built-in-environment-variables
-
-# Recommendations
-# ---------------
-
-# General Principles:
-#
-#  1. Descriptive: The job name should clearly describe what the job does.
-#  2. Concise: Names should be as short as possible while still being descriptive.
-#  3. Consistent: Use a consistent format or pattern for all job names.
-#  4. Avoid Ambiguous Abbreviations: If you use abbreviations, ensure they are widely understood.
-#
-# Naming Convention Proposal:
-#
-#  1. Prefixes based on the nature of the job:
-#     - build-: for jobs related to building or installation.
-#     - lint-: for jobs related to code quality checking.
-#     - test-: for jobs related to testing.
-#     - security-: for jobs related to security.
-#     - metrics-: for jobs related to metrics generation.
-#     - deploy-: for jobs related to deployment.
-#     - notify-: for jobs related to notifications.
-#     - debug-: for jobs related to debugging.
-#     - setup-: for jobs related to set up.
-#     - init-: for jobs related to initialization.
-#     - generate-: for jobs related to generation.
-#     - validate-: for jobs related to validation.
-#     - compile-: for jobs related to compilation.
-#     - e2e-: for jobs related to end-to-end testing.
-#
-#  2. Suffixes based on the specific tool or task:
-#  For example, for a job that uses PHP_CodeSniffer, use phpcs as a suffix.
-
-
 # Default configuration for persist_to_workspace and attach_workspace commands
 persist_to_workspace: &persist_to_workspace
   persist_to_workspace:
@@ -44,10 +9,8 @@ persist_to_workspace: &persist_to_workspace
 
 attach_workspace: &attach_workspace
   attach_workspace:
-    # Must be absolute path or relative path from working_directory
     at: ~/project
 
-# This main executor is used by all jobs unless otherwise specified
 executors:
   php-executor:
     resource_class: small
@@ -55,20 +18,20 @@ executors:
     docker:
       - name: localhost
         image: cimg/php:8.2
+
   builder-executor:
     resource_class: small
     shell: /bin/bash
     docker:
       - image: cimg/php:8.2-node
         name: localhost
+
   simple-executor:
     resource_class: small
     shell: /bin/bash
     docker:
       - image: cimg/base:stable
         name: localhost
-
-
 
 jobs:
   debug-info:
@@ -94,9 +57,7 @@ jobs:
       - checkout
       - restore_cache:
           keys:
-            # "composer.lock" can be used if it is committed to the repo
             - v1-dependencies-{{ checksum "composer.json" }}
-            # fallback to using the latest cache if no exact match is found
             - v1-dependencies-
       - run:
           name: Install dependencies
@@ -106,7 +67,6 @@ jobs:
             - ./vendor
           key: v1-dependencies-{{ checksum "composer.json" }}
       - *persist_to_workspace
-
 
   lint-phpcs:
     executor: php-executor
@@ -129,8 +89,6 @@ jobs:
           path: phpcs-report.txt
           destination: phpcs-report
 
-
-
   security-check-dependencies:
     executor: php-executor
     steps:
@@ -146,8 +104,6 @@ jobs:
       - store_artifacts:
           path: security-report.json
           destination: security-report
-
-
 
   test-phpunit:
     executor: php-executor
@@ -168,57 +124,60 @@ jobs:
           name: Run PHPUnit
           command: ./vendor/bin/phpunit --testsuite=Unit
 
-
   build-docker-image:
-  executor: builder-executor
-  steps:
-    - checkout
-    - setup_remote_docker:
-        docker_layer_caching: true
-    - run:
-        name: Build and Push Docker Image to GHCR
-        command: |
-          set -euo pipefail
+    executor: builder-executor
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - run:
+          name: Build and Push Docker Image to GHCR
+          command: |
+            set -euo pipefail
 
-          if [ -n "${SKIP_BUILD:-}" ]; then
-            echo "Skipping build"
-            circleci step halt
-          fi
+            # Debug: shows whether SKIP_BUILD is injected somewhere (context/org/etc)
+            echo "SKIP_BUILD raw => '${SKIP_BUILD-UNSET}'"
+            env | sort | grep -i skip || true
 
-          if [ -z "${GHCR_PAT:-}" ]; then
-            echo "GHCR_PAT is not set in CircleCI env vars"
-            exit 1
-          fi
+            # Skip build only when explicitly asked
+            if [ "${SKIP_BUILD:-false}" = "true" ] || [ "${SKIP_BUILD:-0}" = "1" ] || [ "${SKIP_BUILD:-}" = "yes" ]; then
+              echo "Skipping build"
+              circleci step halt
+            fi
 
-          GHCR_OWNER="$(echo "$CIRCLE_PROJECT_USERNAME" | tr '[:upper:]' '[:lower:]')"
-          REPO_NAME="$(echo "$CIRCLE_PROJECT_REPONAME" | tr '[:upper:]' '[:lower:]')"
-          REPOSITORY="ghcr.io/${GHCR_OWNER}/${REPO_NAME}"
+            if [ -z "${GHCR_PAT:-}" ]; then
+              echo "GHCR_PAT is not set in CircleCI env vars"
+              exit 1
+            fi
 
-          TAG="$(echo "$CIRCLE_BRANCH" \
-            | tr '[:upper:]' '[:lower:]' \
-            | tr '/' '-' \
-            | tr -cd '[:alnum:]._-' \
-            | cut -c 1-128)"
+            GHCR_OWNER="$(echo "$CIRCLE_PROJECT_USERNAME" | tr '[:upper:]' '[:lower:]')"
+            REPO_NAME="$(echo "$CIRCLE_PROJECT_REPONAME" | tr '[:upper:]' '[:lower:]')"
+            REPOSITORY="ghcr.io/${GHCR_OWNER}/${REPO_NAME}"
 
-          echo "Logging in to GHCR as ${GHCR_OWNER}..."
-          echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
+            TAG="$(echo "$CIRCLE_BRANCH" \
+              | tr '[:upper:]' '[:lower:]' \
+              | tr '/' '-' \
+              | tr -cd '[:alnum:]._-' \
+              | cut -c 1-128)"
 
-          echo "Building ${REPOSITORY}:${TAG}..."
-          docker build \
-            -f Docker/Dockerfile \
-            -t "${REPOSITORY}:${TAG}" \
-            --build-arg BUILD_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-            --build-arg TAG="${TAG}" \
-            --build-arg GIT_COMMIT="$(git rev-parse -q --verify HEAD)" \
-            --build-arg GIT_URL="$(echo "${CIRCLE_REPOSITORY_URL}" | sed -e 's/^git@/https:\/\//g' -e 's/\.git$//g' -e 's/:/\//g')" \
-            --build-arg SQLITE_VERSION=3430200 \
-            --build-arg SQLITE_YEAR=2023 \
-            --build-arg PROJECT_USERNAME="$CIRCLE_PROJECT_USERNAME" \
-            .
+            echo "Logging in to GHCR as ${GHCR_OWNER}..."
+            echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
 
-          echo "Pushing ${REPOSITORY}:${TAG}..."
-          docker push "${REPOSITORY}:${TAG}"
+            echo "Building ${REPOSITORY}:${TAG}..."
+            docker build \
+              -f Docker/Dockerfile \
+              -t "${REPOSITORY}:${TAG}" \
+              --build-arg BUILD_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+              --build-arg TAG="${TAG}" \
+              --build-arg GIT_COMMIT="$(git rev-parse -q --verify HEAD)" \
+              --build-arg GIT_URL="$(echo "${CIRCLE_REPOSITORY_URL}" | sed -e 's/^git@/https:\/\//g' -e 's/\.git$//g' -e 's/:/\//g')" \
+              --build-arg SQLITE_VERSION=3430200 \
+              --build-arg SQLITE_YEAR=2023 \
+              --build-arg PROJECT_USERNAME="$CIRCLE_PROJECT_USERNAME" \
+              .
 
+            echo "Pushing ${REPOSITORY}:${TAG}..."
+            docker push "${REPOSITORY}:${TAG}"
 
   deploy-ssh-staging:
     executor: simple-executor
@@ -238,8 +197,6 @@ jobs:
             (flock -w 10 9 || exit 1; sudo -S service php${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fpm.lock
             EOF
 
-
-  # ✅ JOB PRODUCTION CORRIGÉ
   deploy-ssh-production:
     executor: simple-executor
     steps:
@@ -258,7 +215,6 @@ jobs:
             (flock -w 10 9 || exit 1; sudo -S service php${PHP_FPM_VERSION}-fpm restart) 9>/tmp/fpm.lock
             EOF
 
-
 workflows:
   main_workflow:
     jobs:
@@ -273,35 +229,6 @@ workflows:
       - test-phpunit:
           requires:
             - build-setup
-      #- hold:  # ✅ hold est un type spécial, pas un job
-       #   type: approval
-        #  requires:
-         #   - build-setup
-          #  - lint-phpcs
-           # - security-check-dependencies
-            #- test-phpunit
-          #filters:
-           # branches:
-            #  only:
-             #   - main
-              #  - master
-               # - /^release\/.*/
-      #- deploy-ssh-production:
-       #   requires:
-        #    - hold
-         # filters:
-          #  branches:
-           #   only:
-            #    - main
-             #   - master
-      #- deploy-ssh-staging:
-       #   requires:
-        #    - hold
-         # filters:
-          #  branches:
-           #   only:
-            #    - /^release\/.*/
-
 
   container_workflow:
     jobs:
@@ -316,8 +243,3 @@ workflows:
                 - /^release\/.*/
                 - /^hotfix\/.*/
                 - /^bugfix\/.*/
-
-
-
-
-
