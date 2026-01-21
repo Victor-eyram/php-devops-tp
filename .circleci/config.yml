@@ -170,44 +170,54 @@ jobs:
 
 
   build-docker-image:
-    executor: builder-executor
-    steps:
-      - checkout
-      - setup_remote_docker:
-          docker_layer_caching: true
-      - run:
-          name: Build and Push Docker Image to GHCR
-          command: |
-            if [ ! -z "$SKIP_BUILD" ]; then
-              echo "Skipping build"
-              circleci step halt
-              exit 0
-            fi
+  executor: builder-executor
+  steps:
+    - checkout
+    - setup_remote_docker:
+        docker_layer_caching: true
+    - run:
+        name: Build and Push Docker Image to GHCR
+        command: |
+          set -euo pipefail
 
-            # Sanitize the repository name and branch name
-            REPOSITORY=$(echo "ghcr.io/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME" | tr '[:upper:]' '[:lower:]' | tr -d '_')
-            TAG=$(echo $CIRCLE_BRANCH | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr -cd '[:alnum:]._-' | cut -c 1-128)
+          if [ -n "${SKIP_BUILD:-}" ]; then
+            echo "Skipping build"
+            circleci step halt
+          fi
 
-            # Login to GHCR (convert username to lowercase)
-            command: |
-              GHCR_USERNAME_LOWER=$(echo "$CIRCLE_PROJECT_USERNAME" | tr '[:upper:]' '[:lower:]')
-              echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME_LOWER" --password-stdin
+          if [ -z "${GHCR_PAT:-}" ]; then
+            echo "GHCR_PAT is not set in CircleCI env vars"
+            exit 1
+          fi
 
-            # Build the Docker image
-            docker build \
+          GHCR_OWNER="$(echo "$CIRCLE_PROJECT_USERNAME" | tr '[:upper:]' '[:lower:]')"
+          REPO_NAME="$(echo "$CIRCLE_PROJECT_REPONAME" | tr '[:upper:]' '[:lower:]')"
+          REPOSITORY="ghcr.io/${GHCR_OWNER}/${REPO_NAME}"
+
+          TAG="$(echo "$CIRCLE_BRANCH" \
+            | tr '[:upper:]' '[:lower:]' \
+            | tr '/' '-' \
+            | tr -cd '[:alnum:]._-' \
+            | cut -c 1-128)"
+
+          echo "Logging in to GHCR as ${GHCR_OWNER}..."
+          echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
+
+          echo "Building ${REPOSITORY}:${TAG}..."
+          docker build \
             -f Docker/Dockerfile \
-            -t $REPOSITORY:$TAG \
-            --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+            -t "${REPOSITORY}:${TAG}" \
+            --build-arg BUILD_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
             --build-arg TAG="${TAG}" \
-            --build-arg GIT_COMMIT=$(git rev-parse -q --verify HEAD) \
-            --build-arg GIT_URL=$(echo ${CIRCLE_REPOSITORY_URL} | sed -e 's/^git@/https:\/\//g' -e 's/\.git$//g' -e 's/:/\//g') \
+            --build-arg GIT_COMMIT="$(git rev-parse -q --verify HEAD)" \
+            --build-arg GIT_URL="$(echo "${CIRCLE_REPOSITORY_URL}" | sed -e 's/^git@/https:\/\//g' -e 's/\.git$//g' -e 's/:/\//g')" \
             --build-arg SQLITE_VERSION=3430200 \
             --build-arg SQLITE_YEAR=2023 \
-            --build-arg PROJECT_USERNAME=$CIRCLE_PROJECT_USERNAME \
+            --build-arg PROJECT_USERNAME="$CIRCLE_PROJECT_USERNAME" \
             .
 
-            # Push the Docker image
-            docker push $REPOSITORY:$TAG
+          echo "Pushing ${REPOSITORY}:${TAG}..."
+          docker push "${REPOSITORY}:${TAG}"
 
 
   deploy-ssh-staging:
@@ -306,6 +316,7 @@ workflows:
                 - /^release\/.*/
                 - /^hotfix\/.*/
                 - /^bugfix\/.*/
+
 
 
 
