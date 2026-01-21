@@ -261,34 +261,34 @@ workflows:
       - test-phpunit:
           requires:
             - build-setup
-      - hold:  # ✅ hold est un type spécial, pas un job
-          type: approval
-          requires:
-            - build-setup
-            - lint-phpcs
-            - security-check-dependencies
-            - test-phpunit
-          filters:
-            branches:
-              only:
-                - main
-                - master
-                - /^release\/.*/
-      - deploy-ssh-production:
-          requires:
-            - hold
-          filters:
-            branches:
-              only:
-                - main
-                - master
-      - deploy-ssh-staging:
-          requires:
-            - hold
-          filters:
-            branches:
-              only:
-                - /^release\/.*/
+      #- hold:  # ✅ hold est un type spécial, pas un job
+       #   type: approval
+        #  requires:
+         #   - build-setup
+          #  - lint-phpcs
+           # - security-check-dependencies
+            #- test-phpunit
+          #filters:
+           # branches:
+            #  only:
+             #   - main
+              #  - master
+               # - /^release\/.*/
+      #- deploy-ssh-production:
+       #   requires:
+        #    - hold
+         # filters:
+          #  branches:
+           #   only:
+            #    - main
+             #   - master
+      #- deploy-ssh-staging:
+       #   requires:
+        #    - hold
+         # filters:
+          #  branches:
+           #   only:
+            #    - /^release\/.*/
 
 
   container_workflow:
@@ -304,5 +304,6 @@ workflows:
                 - /^release\/.*/
                 - /^hotfix\/.*/
                 - /^bugfix\/.*/
+
 
 
