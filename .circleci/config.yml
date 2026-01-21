@@ -176,7 +176,7 @@ jobs:
       - setup_remote_docker:
           docker_layer_caching: true
       - run:
-          name: Build and Push Docker Image to GHCR (GitHub Container Registry)
+          name: Build and Push Docker Image to GHCR
           command: |
             if [ ! -z "$SKIP_BUILD" ]; then
               echo "Skipping build"
@@ -188,8 +188,10 @@ jobs:
             REPOSITORY=$(echo "ghcr.io/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME" | tr '[:upper:]' '[:lower:]' | tr -d '_')
             TAG=$(echo $CIRCLE_BRANCH | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr -cd '[:alnum:]._-' | cut -c 1-128)
 
-            # Login to GHCR
-            echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+            # Login to GHCR (convert username to lowercase)
+            command: |
+              GHCR_USERNAME_LOWER=$(echo "$CIRCLE_PROJECT_USERNAME" | tr '[:upper:]' '[:lower:]')
+              echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME_LOWER" --password-stdin
 
             # Build the Docker image
             docker build \
@@ -304,6 +306,7 @@ workflows:
                 - /^release\/.*/
                 - /^hotfix\/.*/
                 - /^bugfix\/.*/
+
 
 
 
