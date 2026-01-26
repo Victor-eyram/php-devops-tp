@@ -134,6 +134,29 @@ jobs:
           name: Build and Push Docker Image to GHCR
           command: |
             set -euo pipefail
+                        # ---- Infisical: load app secrets (APP_ENV, APP_SECRET, DATABASE_URL, JWT_SECRET) ----
+            if [ -z "${INFISICAL_TOKEN:-}" ] || [ -z "${INFISICAL_ENV:-}" ]; then
+              echo "INFISICAL_TOKEN or INFISICAL_ENV is missing in CircleCI env vars"
+              exit 1
+            fi
+
+            # Install Infisical CLI
+            curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.deb.sh' | sudo -E bash
+            sudo apt-get update
+            sudo apt-get install -y infisical
+
+            # Export secrets and load into environment (do NOT print values)
+            infisical export --env="$INFISICAL_ENV" --format=dotenv > .env
+            set -a
+            source .env
+            set +a
+
+            # Proof in logs (no secret values)
+            echo "Infisical loaded:"
+            echo " - APP_ENV=${APP_ENV:-MISSING}"
+            echo " - APP_SECRET=${APP_SECRET:+YES}"
+            echo " - DATABASE_URL=${DATABASE_URL:+YES}"
+            echo " - JWT_SECRET=${JWT_SECRET:+YES}"
 
             # Debug: shows whether SKIP_BUILD is injected somewhere (context/org/etc)
             echo "SKIP_BUILD raw => '${SKIP_BUILD-UNSET}'"
@@ -243,3 +266,4 @@ workflows:
                 - /^release\/.*/
                 - /^hotfix\/.*/
                 - /^bugfix\/.*/
+
