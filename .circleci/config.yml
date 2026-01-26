@@ -146,7 +146,8 @@ jobs:
             sudo apt-get install -y infisical
 
             # Export secrets and load into environment (do NOT print values)
-            infisical export --env="$INFISICAL_ENV" --format=dotenv > .env
+            infisical export --projectId="$INFISICAL_PROJECT_ID" --env="$INFISICAL_ENV" --format=dotenv > .env
+
             set -a
             source .env
             set +a
@@ -266,4 +267,5 @@ workflows:
                 - /^release\/.*/
                 - /^hotfix\/.*/
                 - /^bugfix\/.*/
+
 
