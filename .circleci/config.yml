@@ -217,57 +217,47 @@ jobs:
             (flock -w 10 9 || exit 1; sudo -S service php${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fpm.lock
             EOF
 
-  deploy-ssh-production:
+    deploy-ssh-production:
     executor: simple-executor
     steps:
       - add_ssh_keys:
           fingerprints:
             - "${PROD_SSH_FINGERPRINT}"
+
       - run:
           name: Deploy to AWS Production
           command: |
             set -euo pipefail
-            
-            echo "=========================================="
-            echo "🚀 Deploying to Production"
-            echo "=========================================="
+
+            echo "Deploying to Production..."
             echo "Host: ${PROD_SSH_HOST}"
             echo "User: ${PROD_SSH_USER}"
-            echo "Directory: ${PROD_DEPLOY_DIRECTORY}"
-            echo ""
-            
-            ssh -o StrictHostKeyChecking=no ${PROD_SSH_USER}@${PROD_SSH_HOST} bash << 'EOF'
-              set -euo pipefail
-              
-              echo "📦 Navigating to deployment directory..."
-              cd ${PROD_DEPLOY_DIRECTORY}
-              
-              echo "🔄 Pulling latest changes from main..."
-              git fetch origin
-              git reset --hard origin/main
-              
-              echo "📚 Installing dependencies..."
-              composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
-              
-              echo "🧹 Clearing caches..."
-              # Add your cache clearing commands here if needed
-              
-              echo "🔧 Setting permissions..."
-              sudo chown -R www-data:www-data ${PROD_DEPLOY_DIRECTORY}
-              sudo chmod -R 755 ${PROD_DEPLOY_DIRECTORY}
-              
-              echo "🔄 Restarting PHP-FPM..."
-              PHP_FPM_VERSION=$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
-              sudo systemctl restart php${PHP_FPM_VERSION}-fpm
-              
-              echo "🔄 Reloading Nginx..."
-              sudo nginx -t && sudo systemctl reload nginx
-              
-              echo ""
-              echo "=========================================="
-              echo "✅ Deployment completed successfully!"
-              echo "=========================================="
+            echo "Dir:  ${PROD_DEPLOY_DIRECTORY}"
+
+            ssh -o StrictHostKeyChecking=no "${PROD_SSH_USER}@${PROD_SSH_HOST}" bash <<'EOF'
+set -euo pipefail
+
+echo "📦 Go to deploy directory"
+cd "${PROD_DEPLOY_DIRECTORY}"
+
+echo "🔄 Update code"
+git fetch origin
+git reset --hard origin/main
+
+echo "📚 Install deps"
+composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+
+echo "🔄 Restart PHP-FPM"
+PHP_FPM_VERSION=$(php -v | head -n 1 | awk '{print $2}' | cut -d '.' -f 1-2)
+sudo systemctl restart "php${PHP_FPM_VERSION}-fpm"
+
+echo "🔄 Reload Nginx"
+sudo nginx -t
+sudo systemctl reload nginx
+
+echo "✅ Done"
 EOF
+
       
       - run:
           name: Verify Deployment
@@ -515,3 +505,4 @@ workflows:
                 - /^release\/.*/
                 - /^hotfix\/.*/
                 - /^bugfix\/.*/
+
