@@ -223,67 +223,64 @@ jobs:
       - add_ssh_keys:
           fingerprints:
             - "${PROD_SSH_FINGERPRINT}"
-      - deploy:
+      - run:
           name: Deploy to AWS Production
           command: |
             set -euo pipefail
             
             echo "=========================================="
-            echo " Deploying to Production"
+            echo "🚀 Deploying to Production"
             echo "=========================================="
             echo "Host: ${PROD_SSH_HOST}"
             echo "User: ${PROD_SSH_USER}"
             echo "Directory: ${PROD_DEPLOY_DIRECTORY}"
             echo ""
             
-            ssh -o StrictHostKeyChecking=no ${PROD_SSH_USER}@${PROD_SSH_HOST} << 'ENDSSH'
+            ssh -o StrictHostKeyChecking=no ${PROD_SSH_USER}@${PROD_SSH_HOST} bash << 'EOF'
               set -euo pipefail
               
-              DEPLOY_DIR="${PROD_DEPLOY_DIRECTORY}"
-              BRANCH="main"
+              echo "📦 Navigating to deployment directory..."
+              cd ${PROD_DEPLOY_DIRECTORY}
               
-              echo " Navigating to deployment directory..."
-              cd ${DEPLOY_DIR}
-              
-              echo " Pulling latest changes from ${BRANCH}..."
+              echo "🔄 Pulling latest changes from main..."
               git fetch origin
-              git reset --hard origin/${BRANCH}
+              git reset --hard origin/main
               
-              echo " Installing dependencies..."
+              echo "📚 Installing dependencies..."
               composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
               
-              echo " Clearing caches..."
+              echo "🧹 Clearing caches..."
               # Add your cache clearing commands here if needed
               
               echo "🔧 Setting permissions..."
-              sudo chown -R www-data:www-data ${DEPLOY_DIR}
-              sudo chmod -R 755 ${DEPLOY_DIR}
+              sudo chown -R www-data:www-data ${PROD_DEPLOY_DIRECTORY}
+              sudo chmod -R 755 ${PROD_DEPLOY_DIRECTORY}
               
-              echo " Restarting PHP-FPM..."
+              echo "🔄 Restarting PHP-FPM..."
               PHP_FPM_VERSION=$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
               sudo systemctl restart php${PHP_FPM_VERSION}-fpm
               
-              echo " Reloading Nginx..."
+              echo "🔄 Reloading Nginx..."
               sudo nginx -t && sudo systemctl reload nginx
               
               echo ""
               echo "=========================================="
-              echo " Deployment completed successfully!"
+              echo "✅ Deployment completed successfully!"
               echo "=========================================="
-ENDSSH
+EOF
       
       - run:
           name: Verify Deployment
           command: |
-            echo " Verifying deployment..."
+            echo "🔍 Verifying deployment..."
             sleep 5
             
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${PROD_SSH_HOST}/ || echo "000")
             
             if [ "$HTTP_CODE" = "200" ]; then
-              echo " Application is responding correctly (HTTP $HTTP_CODE)"
+              echo "✅ Application is responding correctly (HTTP $HTTP_CODE)"
             else
-              echo "  Application returned HTTP $HTTP_CODE"
+              echo "⚠️  Application returned HTTP $HTTP_CODE"
               echo "Please check the deployment manually"
             fi
 
@@ -315,14 +312,14 @@ ENDSSH
           name: Display PHPMetrics Summary
           command: |
             echo "=========================================="
-            echo " PHPMetrics - Code Analysis"
+            echo "📊 PHPMetrics - Code Analysis"
             echo "=========================================="
             echo "PHPMetrics report generated successfully!"
             echo "Analyzing code complexity and maintainability..."
             php phpmetrics.phar --report-json=reports/phpmetrics.json --exclude=vendor .
             
             if [ -f "reports/phpmetrics.json" ]; then
-              echo " Analysis complete. Check artifacts for detailed report."
+              echo "✅ Analysis complete. Check artifacts for detailed report."
             fi
 
   metrics-phploc:
@@ -353,7 +350,7 @@ ENDSSH
           name: Display PHPLOC Summary
           command: |
             echo "=========================================="
-            echo " PHPLOC - Lines of Code Statistics"
+            echo "📊 PHPLOC - Lines of Code Statistics"
             echo "=========================================="
             cat reports/phploc.txt
 
@@ -394,7 +391,7 @@ ENDSSH
           name: Display PHPMD Summary
           command: |
             echo "=========================================="
-            echo " PHPMD - Code Quality Analysis"
+            echo "🔍 PHPMD - Code Quality Analysis"
             echo "=========================================="
             if [ -f "reports/phpmd.txt" ]; then
               cat reports/phpmd.txt | head -n 50
@@ -436,7 +433,7 @@ ENDSSH
           name: Display Documentation Coverage
           command: |
             echo "=========================================="
-            echo " PHP Documentation Check"
+            echo "📝 PHP Documentation Check"
             echo "=========================================="
             if [ -f "reports/php-doc-check.txt" ]; then
               cat reports/php-doc-check.txt
