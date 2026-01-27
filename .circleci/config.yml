@@ -34,6 +34,10 @@ executors:
         name: localhost
 
 jobs:
+  # ============================================
+  # PARTIE 1 & 2 : JOBS EXISTANTS
+  # ============================================
+
   debug-info:
     executor: php-executor
     steps:
@@ -134,7 +138,8 @@ jobs:
           name: Build and Push Docker Image to GHCR
           command: |
             set -euo pipefail
-                        # ---- Infisical: load app secrets (APP_ENV, APP_SECRET, DATABASE_URL, JWT_SECRET) ----
+            
+            # ---- Infisical: load app secrets ----
             if [ -z "${INFISICAL_TOKEN:-}" ] || [ -z "${INFISICAL_ENV:-}" ]; then
               echo "INFISICAL_TOKEN or INFISICAL_ENV is missing in CircleCI env vars"
               exit 1
@@ -145,7 +150,7 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y infisical
 
-            # Export secrets and load into environment (do NOT print values)
+            # Export secrets and load into environment
             infisical export --projectId="$INFISICAL_PROJECT_ID" --env="$INFISICAL_ENV" --path="/" --format=dotenv > .env
 
             set -a
@@ -159,11 +164,7 @@ jobs:
             echo " - DATABASE_URL=${DATABASE_URL:+YES}"
             echo " - JWT_SECRET=${JWT_SECRET:+YES}"
 
-            # Debug: shows whether SKIP_BUILD is injected somewhere (context/org/etc)
-            echo "SKIP_BUILD raw => '${SKIP_BUILD-UNSET}'"
-            env | sort | grep -i skip || true
-
-            # Skip build only when explicitly asked
+            # Skip build check
             if [ "${SKIP_BUILD:-false}" = "true" ] || [ "${SKIP_BUILD:-0}" = "1" ] || [ "${SKIP_BUILD:-}" = "yes" ]; then
               echo "Skipping build"
               circleci step halt
@@ -177,12 +178,7 @@ jobs:
             GHCR_OWNER="$(echo "$CIRCLE_PROJECT_USERNAME" | tr '[:upper:]' '[:lower:]')"
             REPO_NAME="$(echo "$CIRCLE_PROJECT_REPONAME" | tr '[:upper:]' '[:lower:]')"
             REPOSITORY="ghcr.io/${GHCR_OWNER}/${REPO_NAME}"
-
-            TAG="$(echo "$CIRCLE_BRANCH" \
-              | tr '[:upper:]' '[:lower:]' \
-              | tr '/' '-' \
-              | tr -cd '[:alnum:]._-' \
-              | cut -c 1-128)"
+            TAG="$(echo "$CIRCLE_BRANCH" | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr -cd '[:alnum:]._-' | cut -c 1-128)"
 
             echo "Logging in to GHCR as ${GHCR_OWNER}..."
             echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
@@ -230,20 +226,234 @@ jobs:
       - deploy:
           name: Deploy to AWS Production
           command: |
-            set -x
-            ssh -o StrictHostKeyChecking=no $PROD_SSH_USER@$PROD_SSH_HOST \<< 'EOF'
-            PHP_FPM_VERSION=$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
-            cd $PROD_DEPLOY_DIRECTORY
-            git pull origin main
-            composer install --optimize-autoloader --no-interaction --prefer-dist
-            (flock -w 10 9 || exit 1; sudo -S service php${PHP_FPM_VERSION}-fpm restart) 9>/tmp/fpm.lock
-            EOF
+            set -euo pipefail
+            
+            echo "=========================================="
+            echo " Deploying to Production"
+            echo "=========================================="
+            echo "Host: ${PROD_SSH_HOST}"
+            echo "User: ${PROD_SSH_USER}"
+            echo "Directory: ${PROD_DEPLOY_DIRECTORY}"
+            echo ""
+            
+            ssh -o StrictHostKeyChecking=no ${PROD_SSH_USER}@${PROD_SSH_HOST} << 'ENDSSH'
+              set -euo pipefail
+              
+              DEPLOY_DIR="${PROD_DEPLOY_DIRECTORY}"
+              BRANCH="main"
+              
+              echo " Navigating to deployment directory..."
+              cd ${DEPLOY_DIR}
+              
+              echo " Pulling latest changes from ${BRANCH}..."
+              git fetch origin
+              git reset --hard origin/${BRANCH}
+              
+              echo " Installing dependencies..."
+              composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+              
+              echo " Clearing caches..."
+              # Add your cache clearing commands here if needed
+              
+              echo "🔧 Setting permissions..."
+              sudo chown -R www-data:www-data ${DEPLOY_DIR}
+              sudo chmod -R 755 ${DEPLOY_DIR}
+              
+              echo " Restarting PHP-FPM..."
+              PHP_FPM_VERSION=$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
+              sudo systemctl restart php${PHP_FPM_VERSION}-fpm
+              
+              echo " Reloading Nginx..."
+              sudo nginx -t && sudo systemctl reload nginx
+              
+              echo ""
+              echo "=========================================="
+              echo " Deployment completed successfully!"
+              echo "=========================================="
+ENDSSH
+      
+      - run:
+          name: Verify Deployment
+          command: |
+            echo " Verifying deployment..."
+            sleep 5
+            
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${PROD_SSH_HOST}/ || echo "000")
+            
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo " Application is responding correctly (HTTP $HTTP_CODE)"
+            else
+              echo "  Application returned HTTP $HTTP_CODE"
+              echo "Please check the deployment manually"
+            fi
+
+  # ============================================
+  # PARTIE 3 : JOBS D'ÉVALUATION DE CODE
+  # ============================================
+
+  metrics-phpmetrics:
+    executor: php-executor
+    steps:
+      - *attach_workspace
+      - run:
+          name: Install PHPMetrics
+          command: |
+            curl -L https://github.com/phpmetrics/PhpMetrics/releases/latest/download/phpmetrics.phar -o phpmetrics.phar
+            chmod +x phpmetrics.phar
+      
+      - run:
+          name: Run PHPMetrics
+          command: |
+            mkdir -p reports/phpmetrics
+            php phpmetrics.phar --report-html=reports/phpmetrics --exclude=vendor .
+      
+      - store_artifacts:
+          path: reports/phpmetrics
+          destination: phpmetrics-report
+      
+      - run:
+          name: Display PHPMetrics Summary
+          command: |
+            echo "=========================================="
+            echo " PHPMetrics - Code Analysis"
+            echo "=========================================="
+            echo "PHPMetrics report generated successfully!"
+            echo "Analyzing code complexity and maintainability..."
+            php phpmetrics.phar --report-json=reports/phpmetrics.json --exclude=vendor .
+            
+            if [ -f "reports/phpmetrics.json" ]; then
+              echo " Analysis complete. Check artifacts for detailed report."
+            fi
+
+  metrics-phploc:
+    executor: php-executor
+    steps:
+      - *attach_workspace
+      - run:
+          name: Install PHPLOC
+          command: |
+            curl -L https://phar.phpunit.de/phploc.phar -o phploc.phar
+            chmod +x phploc.phar
+      
+      - run:
+          name: Run PHPLOC
+          command: |
+            mkdir -p reports
+            ./phploc.phar --exclude vendor --log-json reports/phploc.json . | tee reports/phploc.txt
+      
+      - store_artifacts:
+          path: reports/phploc.txt
+          destination: phploc-report
+      
+      - store_artifacts:
+          path: reports/phploc.json
+          destination: phploc-report-json
+      
+      - run:
+          name: Display PHPLOC Summary
+          command: |
+            echo "=========================================="
+            echo " PHPLOC - Lines of Code Statistics"
+            echo "=========================================="
+            cat reports/phploc.txt
+
+  # ============================================
+  # PARTIE 3 : JOBS DE QUALITÉ DU CODE
+  # ============================================
+
+  quality-phpmd:
+    executor: php-executor
+    steps:
+      - *attach_workspace
+      - run:
+          name: Install PHPMD
+          command: |
+            curl -L https://github.com/phpmd/phpmd/releases/latest/download/phpmd.phar -o phpmd.phar
+            chmod +x phpmd.phar
+      
+      - run:
+          name: Run PHPMD
+          command: |
+            mkdir -p reports
+            ./phpmd.phar . html cleancode,codesize,controversial,design,naming,unusedcode \
+              --exclude vendor \
+              --reportfile reports/phpmd.html || true
+            
+            ./phpmd.phar . text cleancode,codesize,controversial,design,naming,unusedcode \
+              --exclude vendor | tee reports/phpmd.txt || true
+      
+      - store_artifacts:
+          path: reports/phpmd.html
+          destination: phpmd-report-html
+      
+      - store_artifacts:
+          path: reports/phpmd.txt
+          destination: phpmd-report-txt
+      
+      - run:
+          name: Display PHPMD Summary
+          command: |
+            echo "=========================================="
+            echo " PHPMD - Code Quality Analysis"
+            echo "=========================================="
+            if [ -f "reports/phpmd.txt" ]; then
+              cat reports/phpmd.txt | head -n 50
+            fi
+
+  quality-php-doc-check:
+    executor: php-executor
+    steps:
+      - *attach_workspace
+      - run:
+          name: Install PHP-Doc-Check
+          command: |
+            composer require --dev niels-de-blaauw/php-doc-check
+      
+      - run:
+          name: Run PHP-Doc-Check
+          command: |
+            mkdir -p reports
+            ./vendor/bin/php-doc-check \
+              --directory src \
+              --directory tests \
+              --exclude vendor \
+              --format json > reports/php-doc-check.json || true
+            
+            ./vendor/bin/php-doc-check \
+              --directory src \
+              --directory tests \
+              --exclude vendor | tee reports/php-doc-check.txt || true
+      
+      - store_artifacts:
+          path: reports/php-doc-check.json
+          destination: php-doc-check-json
+      
+      - store_artifacts:
+          path: reports/php-doc-check.txt
+          destination: php-doc-check-txt
+      
+      - run:
+          name: Display Documentation Coverage
+          command: |
+            echo "=========================================="
+            echo " PHP Documentation Check"
+            echo "=========================================="
+            if [ -f "reports/php-doc-check.txt" ]; then
+              cat reports/php-doc-check.txt
+            fi
+
+# ============================================
+# WORKFLOWS
+# ============================================
 
 workflows:
   main_workflow:
     jobs:
+      # Debug et setup
       - debug-info
       - build-setup
+      
+      # Jobs de validation (parallèle)
       - lint-phpcs:
           requires:
             - build-setup
@@ -253,38 +463,47 @@ workflows:
       - test-phpunit:
           requires:
             - build-setup
-      # Job d'évaluation : PHPMetrics
-       - metrics-phpmetrics:
-          executor: php-executor
-          steps:
-            - *attach_workspace
-            - run:
-                name: Install PHPMetrics
-                command: |
-                  curl -L https://github.com/phpmetrics/PhpMetrics/releases/latest/download/phpmetrics.phar -o phpmetrics.phar
-                  chmod +x phpmetrics.phar
-            
-            - run:
-                name: Run PHPMetrics
-                command: |
-                  mkdir -p reports/phpmetrics
-                  php phpmetrics.phar --report-html=reports/phpmetrics --exclude=vendor .
-            
-            - store_artifacts:
-                path: reports/phpmetrics
-                destination: phpmetrics-report
-            
-            - run:
-                name: Display PHPMetrics Summary
-                command: |
-                  echo "PHPMetrics report generated successfully!"
-                  echo "Analyzing code complexity and maintainability..."
-                  php phpmetrics.phar --report-json=reports/phpmetrics.json --exclude=vendor .
-                  
-                  # Extract and display key metrics
-                  if [ -f "reports/phpmetrics.json" ]; then
-                    echo "✅ Analysis complete. Check artifacts for detailed report."
-                  fi
+      
+      # Jobs de métriques (parallèle) - PARTIE 3
+      - metrics-phpmetrics:
+          requires:
+            - build-setup
+      - metrics-phploc:
+          requires:
+            - build-setup
+      
+      # Jobs de qualité (parallèle) - PARTIE 3
+      - quality-phpmd:
+          requires:
+            - build-setup
+      - quality-php-doc-check:
+          requires:
+            - build-setup
+      
+      # Approbation manuelle pour production
+      - hold-production:
+          type: approval
+          requires:
+            - lint-phpcs
+            - security-check-dependencies
+            - test-phpunit
+            - metrics-phpmetrics
+            - metrics-phploc
+            - quality-phpmd
+            - quality-php-doc-check
+          filters:
+            branches:
+              only:
+                - main
+      
+      # Déploiement en production
+      - deploy-ssh-production:
+          requires:
+            - hold-production
+          filters:
+            branches:
+              only:
+                - main
 
   container_workflow:
     jobs:
@@ -299,7 +518,3 @@ workflows:
                 - /^release\/.*/
                 - /^hotfix\/.*/
                 - /^bugfix\/.*/
-
-
-
-
