@@ -253,6 +253,38 @@ workflows:
       - test-phpunit:
           requires:
             - build-setup
+      # Job d'évaluation : PHPMetrics
+       - metrics-phpmetrics:
+          executor: php-executor
+          steps:
+            - *attach_workspace
+            - run:
+                name: Install PHPMetrics
+                command: |
+                  curl -L https://github.com/phpmetrics/PhpMetrics/releases/latest/download/phpmetrics.phar -o phpmetrics.phar
+                  chmod +x phpmetrics.phar
+            
+            - run:
+                name: Run PHPMetrics
+                command: |
+                  mkdir -p reports/phpmetrics
+                  php phpmetrics.phar --report-html=reports/phpmetrics --exclude=vendor .
+            
+            - store_artifacts:
+                path: reports/phpmetrics
+                destination: phpmetrics-report
+            
+            - run:
+                name: Display PHPMetrics Summary
+                command: |
+                  echo "PHPMetrics report generated successfully!"
+                  echo "Analyzing code complexity and maintainability..."
+                  php phpmetrics.phar --report-json=reports/phpmetrics.json --exclude=vendor .
+                  
+                  # Extract and display key metrics
+                  if [ -f "reports/phpmetrics.json" ]; then
+                    echo "✅ Analysis complete. Check artifacts for detailed report."
+                  fi
 
   container_workflow:
     jobs:
@@ -267,6 +299,7 @@ workflows:
                 - /^release\/.*/
                 - /^hotfix\/.*/
                 - /^bugfix\/.*/
+
 
 
 
