@@ -213,6 +213,7 @@ jobs:
             ssh -o StrictHostKeyChecking=no $STAGING_SSH_USER@$STAGING_SSH_HOST "
               PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2) &&
               cd $STAGING_DEPLOY_DIRECTORY &&
+              sudo chown -R ec2-user:ec2-user
               git pull origin $CIRCLE_BRANCH &&
               composer install --optimize-autoloader --no-interaction --prefer-dist &&
               (flock -w 10 9 || exit 1; sudo -S service php\${PHP_FPM_VERSION}-fpm restart) 9>/tmp/fpm.lock
@@ -230,7 +231,7 @@ jobs:
             set -euo pipefail
             
             echo "=========================================="
-            echo "🚀 Deploying to Production"
+            echo " Deploying to Production"
             echo "=========================================="
             echo "Host: ${PROD_SSH_HOST}"
             echo "User: ${PROD_SSH_USER}"
@@ -240,42 +241,43 @@ jobs:
             # Deploy using inline SSH commands
             ssh -o StrictHostKeyChecking=no ${PROD_SSH_USER}@${PROD_SSH_HOST} "
               set -euo pipefail &&
-              echo '📦 Navigating to deployment directory...' &&
+              echo ' Navigating to deployment directory...' &&
               cd ${PROD_DEPLOY_DIRECTORY} &&
-              echo '🔄 Pulling latest changes from main...' &&
+              echo '🔧 Restoring ownership to ec2-user for git operations...' &&
+              sudo chown -R ec2-user:ec2-user ${PROD_DEPLOY_DIRECTORY} &&
+              echo ' Pulling latest changes from main...' &&
               git fetch origin &&
               git reset --hard origin/main &&
-              echo '📚 Installing dependencies...' &&
+              echo ' Installing dependencies...' &&
               composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader &&
-              echo '🔧 Setting permissions...' &&
-              sudo chown -R www-data:www-data ${PROD_DEPLOY_DIRECTORY} &&
+              echo ' Setting permissions for nginx...' &&
+              sudo chown -R nginx:nginx ${PROD_DEPLOY_DIRECTORY} &&
               sudo chmod -R 755 ${PROD_DEPLOY_DIRECTORY} &&
-              echo '🔄 Restarting PHP-FPM...' &&
+              echo ' Restarting PHP-FPM...' &&
               PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2) &&
-              sudo systemctl restart php\${PHP_FPM_VERSION}-fpm &&
-              echo '🔄 Reloading Nginx...' &&
+              sudo systemctl restart php-fpm &&
+              echo ' Reloading Nginx...' &&
               sudo nginx -t && sudo systemctl reload nginx &&
               echo '' &&
               echo '==========================================' &&
-              echo '✅ Deployment completed successfully!' &&
+              echo ' Deployment completed successfully!' &&
               echo '=========================================='
             "
       
       - run:
           name: Verify Deployment
           command: |
-            echo "🔍 Verifying deployment..."
+            echo " Verifying deployment..."
             sleep 5
             
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${PROD_SSH_HOST}/ || echo "000")
             
             if [ "$HTTP_CODE" = "200" ]; then
-              echo "✅ Application is responding correctly (HTTP $HTTP_CODE)"
+              echo " Application is responding correctly (HTTP $HTTP_CODE)"
             else
-              echo "⚠️  Application returned HTTP $HTTP_CODE"
+              echo "  Application returned HTTP $HTTP_CODE"
               echo "Please check the deployment manually"
             fi
-
   # ============================================
   # PARTIE 3 : JOBS D'ÉVALUATION DE CODE
   # ============================================
@@ -304,14 +306,14 @@ jobs:
           name: Display PHPMetrics Summary
           command: |
             echo "=========================================="
-            echo "📊 PHPMetrics - Code Analysis"
+            echo " PHPMetrics - Code Analysis"
             echo "=========================================="
             echo "PHPMetrics report generated successfully!"
             echo "Analyzing code complexity and maintainability..."
             php phpmetrics.phar --report-json=reports/phpmetrics.json --exclude=vendor .
             
             if [ -f "reports/phpmetrics.json" ]; then
-              echo "✅ Analysis complete. Check artifacts for detailed report."
+              echo " Analysis complete. Check artifacts for detailed report."
             fi
 
   metrics-phploc:
@@ -342,7 +344,7 @@ jobs:
           name: Display PHPLOC Summary
           command: |
             echo "=========================================="
-            echo "📊 PHPLOC - Lines of Code Statistics"
+            echo " PHPLOC - Lines of Code Statistics"
             echo "=========================================="
             cat reports/phploc.txt
 
@@ -383,7 +385,7 @@ jobs:
           name: Display PHPMD Summary
           command: |
             echo "=========================================="
-            echo "🔍 PHPMD - Code Quality Analysis"
+            echo " PHPMD - Code Quality Analysis"
             echo "=========================================="
             if [ -f "reports/phpmd.txt" ]; then
               cat reports/phpmd.txt | head -n 50
@@ -425,7 +427,7 @@ jobs:
           name: Display Documentation Coverage
           command: |
             echo "=========================================="
-            echo "📝 PHP Documentation Check"
+            echo " PHP Documentation Check"
             echo "=========================================="
             if [ -f "reports/php-doc-check.txt" ]; then
               cat reports/php-doc-check.txt
@@ -507,3 +509,4 @@ workflows:
                 - /^release\/.*/
                 - /^hotfix\/.*/
                 - /^bugfix\/.*/
+
